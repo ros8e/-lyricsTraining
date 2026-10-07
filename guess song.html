@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>前奏猜歌大賽</title>
+    <style>
+        body {
+            font-family: 'Microsoft JhengHei', sans-serif;
+            background-color: #1a1a2e;
+            color: white;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 { color: #e94560; }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: #16213e;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+        .status-board {
+            font-size: 24px;
+            margin: 20px 0;
+            padding: 20px;
+            background: #0f3460;
+            border-radius: 10px;
+            min-height: 80px;
+        }
+        .timer {
+            font-size: 60px;
+            color: #e94560;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .buzzer-alert {
+            font-size: 40px;
+            color: #f9a826;
+            animation: blink 1s infinite;
+        }
+        @keyframes blink { 50% { opacity: 0; } }
+        button {
+            background-color: #e94560;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px;
+            transition: 0.3s;
+        }
+        button:hover { background-color: #d1304b; }
+        button:disabled { background-color: #555; cursor: not-allowed; }
+        .scoreboard {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 30px;
+        }
+        .team {
+            background: #0f3460;
+            padding: 15px;
+            border-radius: 10px;
+            width: 25%;
+        }
+        .team h3 { margin: 0 0 10px 0; }
+        .score { font-size: 30px; font-weight: bold; margin: 10px 0;}
+        .score-btn { padding: 5px 15px; margin: 5px; background: #4caf50; }
+        .score-btn.minus { background: #f44336; }
+        /* 隱藏 YouTube 影片，只保留聲音 */
+        #youtube-player-container {
+            position: absolute;
+            top: -9999px;
+            left: -9999px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>🎵 前奏猜歌大賽 🎵</h1>
+        
+        <div class="status-board">
+            <div id="question-info">準備開始：第 1 題</div>
+            <div id="buzzer-display" class="buzzer-alert" style="display: none;"></div>
+            <div id="timer-display" class="timer" style="display: none;">10.0</div>
+            <div id="answer-display" style="display: none; color: #4caf50; font-size: 30px; margin-top: 15px;"></div>
+        </div>
+
+        <div class="controls">
+            <button id="btn-play" onclick="playMusic()">▶ 播放前奏</button>
+            <button id="btn-answer" onclick="showAnswer()" disabled>👀 顯示解答</button>
+            <button id="btn-next" onclick="nextQuestion()" disabled>⏭ 下一題</button>
+        </div>
+
+        <div class="scoreboard">
+            <div class="team">
+                <h3>第一組 (按 Q)</h3>
+                <div class="score" id="score-1">0</div>
+                <button class="score-btn" onclick="addScore(1, 1)">+1</button>
+                <button class="score-btn minus" onclick="addScore(1, -1)">-1</button>
+            </div>
+            <div class="team">
+                <h3>第二組 (按 V)</h3>
+                <div class="score" id="score-2">0</div>
+                <button class="score-btn" onclick="addScore(2, 1)">+1</button>
+                <button class="score-btn minus" onclick="addScore(2, -1)">-1</button>
+            </div>
+            <div class="team">
+                <h3>第三組 (按 P)</h3>
+                <div class="score" id="score-3">0</div>
+                <button class="score-btn" onclick="addScore(3, 1)">+1</button>
+                <button class="score-btn minus" onclick="addScore(3, -1)">-1</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- YouTube 播放器隱藏容器 -->
+    <div id="youtube-player-container">
+        <div id="player"></div>
+    </div>
+
+    <!-- 載入 YouTube IFrame API -->
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script>
+        // ==========================================
+        // 📝 這裡是你需要修改的「題庫設定區」
+        // ==========================================
+        const questions = [
+            { 
+                videoId: "9bZkp7q19f0", // YouTube 網址 v= 後面的代碼 (江南Style)
+                startSeconds: 0,        // 從第幾秒開始播放
+                answer: "PSY - GANGNAM STYLE" 
+            },
+            { 
+                videoId: "dQw4w9WgXcQ", 
+                startSeconds: 18,       // 直接跳過前奏，從 18 秒開始播
+                answer: "Rick Astley - Never Gonna Give You Up" 
+            },
+            { 
+                videoId: "kJQP7kiw5Fk", 
+                startSeconds: 15, 
+                answer: "Luis Fonsi - Despacito" 
+            }
+        ];
+
+        // 定義搶答按鍵 (必須小寫)
+        const teamKeys = {
+            'q': { id: 1, name: "第一組" },
+            'v': { id: 2, name: "第二組" },
+            'p': { id: 3, name: "第三組" }
+        };
+        // ==========================================
+
+        let player;
+        let currentQIndex = 0;
+        let gameState = 'ready'; // ready, playing, buzzed, answered
+        let timerInterval;
+        let timeLeft = 10.0;
+        let scores = { 1: 0, 2: 0, 3: 0 };
+
+        // 當 YouTube API 準備好時自動執行
+        function onYouTubeIframeAPIReady() {
+            player = new YT.Player('player', {
+                height: '10',
+                width: '10',
+                videoId: questions[currentQIndex].videoId,
+                playerVars: {
+                    'playsinline': 1,
+                    'controls': 0,
+                    'disablekb': 1
+                },
+                events: {
+                    'onReady': onPlayerReady
+                }
+            });
+        }
+
+        function onPlayerReady(event) {
+            console.log("YouTube 播放器已載入");
+        }
+
+        // 播放音樂
+        function playMusic() {
+            if (gameState === 'answered') return;
+            
+            // 如果是新的一題，載入該題的影片與秒數
+            if (gameState === 'ready') {
+                player.loadVideoById({
+                    videoId: questions[currentQIndex].videoId,
+                    startSeconds: questions[currentQIndex].startSeconds
+                });
+            } else if (gameState === 'buzzed') {
+                // 如果有人搶答答錯，繼續播放
+                player.playVideo();
+                resetTimerUI();
+            }
+            
+            gameState = 'playing';
+            document.getElementById('question-info').innerText = `🎵 第 ${currentQIndex + 1} 題：播放中...`;
+            document.getElementById('btn-play').disabled = true;
+            document.getElementById('btn-answer').disabled = false;
+        }
+
+        // 監聽鍵盤搶答
+        document.addEventListener('keydown', (event) => {
+            const key = event.key.toLowerCase();
+            if (gameState === 'playing' && teamKeys[key]) {
+                handleBuzzer(teamKeys[key].name);
+            }
+        });
+
+        // 處理搶答邏輯
+        function handleBuzzer(teamName) {
+            player.pauseVideo();
+            gameState = 'buzzed';
+            
+            document.getElementById('question-info').style.display = 'none';
+            const buzzerDisplay = document.getElementById('buzzer-display');
+            buzzerDisplay.innerText = `🚨 ${teamName} 搶答！ 🚨`;
+            buzzerDisplay.style.display = 'block';
+            
+            startTimer();
+        }
+
+        // 10秒倒數計時器
+        function startTimer() {
+            timeLeft = 10.0;
+            const timerDisplay = document.getElementById('timer-display');
+            timerDisplay.style.display = 'block';
+            timerDisplay.innerText = timeLeft.toFixed(1);
+
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                timeLeft -= 0.1;
+                if (timeLeft <= 0) {
+                    timeLeft = 0;
+                    clearInterval(timerInterval);
+                    timerDisplay.innerText = "0.0";
+                    timerDisplay.style.color = "red";
+                    // 時間到，允許繼續播放或直接看解答
+                    document.getElementById('btn-play').disabled = false; 
+                } else {
+                    timerDisplay.innerText = timeLeft.toFixed(1);
+                }
+            }, 100);
+        }
+
+        // 恢復 UI 狀態（給繼續播放用）
+        function resetTimerUI() {
+            clearInterval(timerInterval);
+            document.getElementById('buzzer-display').style.display = 'none';
+            document.getElementById('timer-display').style.display = 'none';
+            document.getElementById('timer-display').style.color = "#e94560";
+            document.getElementById('question-info').style.display = 'block';
+        }
+
+        // 顯示解答
+        function showAnswer() {
+            player.pauseVideo();
+            clearInterval(timerInterval);
+            gameState = 'answered';
+            
+            resetTimerUI();
+            document.getElementById('question-info').style.display = 'none';
+            
+            const answerDisplay = document.getElementById('answer-display');
+            answerDisplay.innerText = `解答：${questions[currentQIndex].answer}`;
+            answerDisplay.style.display = 'block';
+
+            document.getElementById('btn-play').disabled = true;
+            document.getElementById('btn-answer').disabled = true;
+            document.getElementById('btn-next').disabled = false;
+        }
+
+        // 下一題
+        function nextQuestion() {
+            currentQIndex++;
+            if (currentQIndex >= questions.length) {
+                alert("題目已經全部播完囉！");
+                currentQIndex = questions.length - 1;
+                return;
+            }
+
+            gameState = 'ready';
+            resetTimerUI();
+            document.getElementById('question-info').innerText = `準備開始：第 ${currentQIndex + 1} 題`;
+            document.getElementById('answer-display').style.display = 'none';
+            
+            document.getElementById('btn-play').disabled = false;
+            document.getElementById('btn-next').disabled = true;
+            document.getElementById('btn-answer').disabled = true;
+        }
+
+        // 手動計分
+        function addScore(teamId, points) {
+            scores[teamId] += points;
+            document.getElementById(`score-${teamId}`).innerText = scores[teamId];
+        }
+    </script>
+</body>
+</html>
